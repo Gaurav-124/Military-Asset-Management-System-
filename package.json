@@ -1,0 +1,20 @@
+const mongoose = require('mongoose');
+
+const purchaseSchema = new mongoose.Schema({
+  asset: { type: mongoose.Schema.Types.ObjectId, ref: 'Asset', required: true },
+  base: { type: mongoose.Schema.Types.ObjectId, ref: 'Base', required: true },
+  equipmentType: {
+    type: String,
+    enum: ['vehicle', 'weapon', 'ammunition', 'equipment'],
+    required: true
+  },
+  quantity: { type: Number, required: true, min: 1 },
+  unitCost: { type: Number, default: 0 },
+  totalCost: { type: Number, default: 0 },
+  supplier: { type: String },
+  purchaseDate: { type: Date, default: Date.now },
+  notes: { type: String },
+  recordedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true }
+}, { timestamps: true });
+
+module.exports = mongoose.model('Purchase', purchaseSchema);
