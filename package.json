@@ -1,20 +1,234 @@
-const mongoose = require('mongoose');
+import { useState, useEffect } from 'react';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
+import API from '../utils/api';
+import { useAuth } from '../context/AuthContext';
 
-const purchaseSchema = new mongoose.Schema({
-  asset: { type: mongoose.Schema.Types.ObjectId, ref: 'Asset', required: true },
-  base: { type: mongoose.Schema.Types.ObjectId, ref: 'Base', required: true },
-  equipmentType: {
-    type: String,
-    enum: ['vehicle', 'weapon', 'ammunition', 'equipment'],
-    required: true
-  },
-  quantity: { type: Number, required: true, min: 1 },
-  unitCost: { type: Number, default: 0 },
-  totalCost: { type: Number, default: 0 },
-  supplier: { type: String },
-  purchaseDate: { type: Date, default: Date.now },
-  notes: { type: String },
-  recordedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true }
-}, { timestamps: true });
+const EQUIPMENT_TYPES = ['', 'vehicle', 'weapon', 'ammunition', 'equipment'];
 
-module.exports = mongoose.model('Purchase', purchaseSchema);
+function MetricCard({ label, value, icon, color, onClick, sub }) {
+  return (
+    <div onClick={onClick} className={`metric-card ${onClick ? 'cursor-pointer hover:scale-105 transition-transform' : ''}`}>
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-mono text-military-400 uppercase tracking-widest">{label}</span>
+        <span className={`text-2xl ${color}`}>{icon}</span>
+      </div>
+      <div className={`text-3xl font-bold font-mono ${color}`}>{value?.toLocaleString() ?? '—'}</div>
+      {sub && <div className="text-xs text-gray-500 font-mono">{sub}</div>}
+    </div>
+  );
+}
+
+function NetMovementModal({ data, onClose }) {
+  const [tab, setTab] = useState('purchases');
+  const tabs = [
+    { id: 'purchases', label: 'Purchases', data: data?.purchases || [] },
+    { id: 'transfersIn', label: 'Transfers In', data: data?.transfersIn || [] },
+    { id: 'transfersOut', label: 'Transfers Out', data: data?.transfersOut || [] }
+  ];
+  const current = tabs.find(t => t.id === tab);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+      <div className="bg-military-800 border border-military-500 rounded-xl w-full max-w-3xl mx-4 max-h-[85vh] flex flex-col fade-in">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-military-700">
+          <h2 className="font-mono font-bold text-khaki-300 uppercase tracking-widest">NET MOVEMENT DETAILS</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-white text-xl">✕</button>
+        </div>
+        <div className="flex border-b border-military-700">
+          {tabs.map(t => (
+            <button key={t.id} onClick={() => setTab(t.id)}
+              className={`px-6 py-3 text-xs font-mono uppercase tracking-widest transition-colors ${tab === t.id ? 'border-b-2 border-military-300 text-military-200' : 'text-military-400 hover:text-military-200'}`}>
+              {t.label} ({t.data.length})
+            </button>
+          ))}
+        </div>
+        <div className="overflow-y-auto flex-1 p-4">
+          {current.data.length === 0 ? (
+            <div className="text-center text-military-400 font-mono py-10">NO RECORDS FOUND</div>
+          ) : (
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-military-400 text-xs font-mono uppercase tracking-wider">
+                  <th className="pb-3 text-left">Asset</th>
+                  <th className="pb-3 text-left">Base</th>
+                  <th className="pb-3 text-left">Type</th>
+                  <th className="pb-3 text-right">Qty</th>
+                  <th className="pb-3 text-left">Date</th>
+                </tr>
+              </thead>
+              <tbody>
+                {current.data.map((item) => (
+                  <tr key={item._id} className="table-row">
+                    <td className="py-2 text-gray-200">{item.asset?.name || 'N/A'}</td>
+                    <td className="py-2 text-military-300">
+                      {tab === 'transfersIn' ? item.toBase?.name : tab === 'transfersOut' ? item.fromBase?.name : item.base?.name}
+                    </td>
+                    <td className="py-2">
+                      <span className={`tag-${item.equipmentType}`}>{item.equipmentType}</span>
+                    </td>
+                    <td className="py-2 text-right font-mono text-khaki-300">{item.quantity?.toLocaleString()}</td>
+                    <td className="py-2 text-gray-400 font-mono text-xs">
+                      {new Date(item.purchaseDate || item.transferDate || item.createdAt).toLocaleDateString()}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default function Dashboard() {
+  const { user } = useAuth();
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [showModal, setShowModal] = useState(false);
+  const [filters, setFilters] = useState({ startDate: '', endDate: '', baseId: '', equipmentType: '' });
+  const [bases, setBases] = useState([]);
+
+  useEffect(() => {
+    API.get('/bases').then(r => setBases(r.data.data)).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    setLoading(true);
+    const params = Object.fromEntries(Object.entries(filters).filter(([, v]) => v));
+    API.get('/dashboard', { params })
+      .then(r => setData(r.data.data))
+      .catch(console.error)
+      .finally(() => setLoading(false));
+  }, [filters]);
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold font-mono text-military-100 uppercase tracking-widest">COMMAND DASHBOARD</h1>
+          <p className="text-military-400 text-sm font-mono mt-1">
+            {new Date().toLocaleString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="w-2 h-2 rounded-full bg-military-400 pulse-green" />
+          <span className="text-xs text-military-400 font-mono uppercase">{user?.role?.replace('_', ' ')}</span>
+        </div>
+      </div>
+
+      {/* Filters */}
+      <div className="card">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div>
+            <label className="label">From Date</label>
+            <input type="date" className="input" value={filters.startDate} onChange={e => setFilters(f => ({ ...f, startDate: e.target.value }))} />
+          </div>
+          <div>
+            <label className="label">To Date</label>
+            <input type="date" className="input" value={filters.endDate} onChange={e => setFilters(f => ({ ...f, endDate: e.target.value }))} />
+          </div>
+          <div>
+            <label className="label">Base</label>
+            <select className="select" value={filters.baseId} onChange={e => setFilters(f => ({ ...f, baseId: e.target.value }))}>
+              <option value="">All Bases</option>
+              {bases.map(b => <option key={b._id} value={b._id}>{b.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="label">Equipment Type</label>
+            <select className="select" value={filters.equipmentType} onChange={e => setFilters(f => ({ ...f, equipmentType: e.target.value }))}>
+              <option value="">All Types</option>
+              {['vehicle', 'weapon', 'ammunition', 'equipment'].map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </div>
+        </div>
+        {(filters.startDate || filters.endDate || filters.baseId || filters.equipmentType) && (
+          <button className="btn-secondary mt-3 text-xs" onClick={() => setFilters({ startDate: '', endDate: '', baseId: '', equipmentType: '' })}>
+            ✕ Clear Filters
+          </button>
+        )}
+      </div>
+
+      {loading ? (
+        <div className="text-center text-military-400 font-mono py-20 tracking-widest">LOADING INTEL...</div>
+      ) : (
+        <>
+          {/* Metric Cards */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <MetricCard label="Opening Balance" value={data?.openingBalance} icon="◐" color="text-khaki-300" />
+            <MetricCard label="Closing Balance" value={data?.closingBalance} icon="◑" color="text-military-200" />
+            <MetricCard
+              label="Net Movement"
+              value={data?.netMovement}
+              icon="⇌"
+              color={data?.netMovement >= 0 ? 'text-green-400' : 'text-red-400'}
+              onClick={() => setShowModal(true)}
+              sub="Click for breakdown"
+            />
+            <MetricCard label="Total Assigned" value={data?.totalAssigned} icon="◉" color="text-blue-400" />
+          </div>
+
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <MetricCard label="Purchases" value={data?.totalPurchases} icon="⊕" color="text-military-300" />
+            <MetricCard label="Transfers In" value={data?.totalTransfersIn} icon="↓" color="text-green-300" />
+            <MetricCard label="Transfers Out" value={data?.totalTransfersOut} icon="↑" color="text-red-300" />
+            <MetricCard label="Expended" value={data?.totalExpended} icon="⊗" color="text-orange-400" />
+          </div>
+
+          {/* Base Breakdown Chart */}
+          {data?.baseBreakdown && (
+            <div className="card">
+              <h2 className="font-mono text-xs uppercase tracking-widest text-khaki-300 mb-4">BASE-WISE ASSET OVERVIEW</h2>
+              <ResponsiveContainer width="100%" height={220}>
+                <BarChart data={data.baseBreakdown} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1f3a24" />
+                  <XAxis dataKey="base" tick={{ fill: '#6db87a', fontSize: 11, fontFamily: 'Share Tech Mono' }} />
+                  <YAxis tick={{ fill: '#6db87a', fontSize: 11, fontFamily: 'Share Tech Mono' }} />
+                  <Tooltip contentStyle={{ background: '#111a14', border: '1px solid #2d5a34', fontFamily: 'Share Tech Mono', fontSize: 11 }} />
+                  <Bar dataKey="openingBalance" name="Opening" fill="#3d7a46" />
+                  <Bar dataKey="purchases" name="Purchases" fill="#4d9a58" />
+                  <Bar dataKey="transfersIn" name="TX In" fill="#6db87a" />
+                  <Bar dataKey="transfersOut" name="TX Out" fill="#dc2626" />
+                  <Bar dataKey="closingBalance" name="Closing" fill="#c4b050" />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+
+          {/* Base Breakdown Table */}
+          <div className="card overflow-x-auto">
+            <h2 className="font-mono text-xs uppercase tracking-widest text-khaki-300 mb-4">BASE BREAKDOWN TABLE</h2>
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-military-400 text-xs font-mono uppercase tracking-wider border-b border-military-700">
+                  {['Base', 'Opening Bal.', 'Purchases', 'TX In', 'TX Out', 'Net Movement', 'Closing Bal.'].map(h => (
+                    <th key={h} className="pb-3 px-3 text-left">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {data?.baseBreakdown?.map(row => (
+                  <tr key={row.baseId} className="table-row">
+                    <td className="py-3 px-3 font-semibold text-military-200">{row.base}</td>
+                    <td className="py-3 px-3 font-mono text-khaki-300">{row.openingBalance.toLocaleString()}</td>
+                    <td className="py-3 px-3 font-mono text-military-300">{row.purchases.toLocaleString()}</td>
+                    <td className="py-3 px-3 font-mono text-green-400">{row.transfersIn.toLocaleString()}</td>
+                    <td className="py-3 px-3 font-mono text-red-400">{row.transfersOut.toLocaleString()}</td>
+                    <td className={`py-3 px-3 font-mono font-bold ${row.netMovement >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                      {row.netMovement >= 0 ? '+' : ''}{row.netMovement.toLocaleString()}
+                    </td>
+                    <td className="py-3 px-3 font-mono text-military-100 font-bold">{row.closingBalance.toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+
+      {showModal && <NetMovementModal data={data?.netMovementDetails} onClose={() => setShowModal(false)} />}
+    </div>
+  );
+}
